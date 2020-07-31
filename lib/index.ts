@@ -194,9 +194,11 @@ class QueuesController {
 class Internals {
   options: PluginOptions;
   queues!: any[];
+
   constructor(options: PluginOptions) {
     this.options = options;
   }
+
   async onPostStart(server: Hapi.Server) {
     const { basePath } = this.options;
 

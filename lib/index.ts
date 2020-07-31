@@ -4,8 +4,8 @@ import Hapi, { Plugin } from '@hapi/hapi';
 import packageJson from '../package.json';
 
 interface PluginOptions {
-  path?: string;
-  queues: any[];
+  basePath?: string;
+  getQueues: () => Promise<any[]>;
   routeOptions?: Hapi.RouteOptions;
 }
 
@@ -37,6 +37,14 @@ const statuses = [
   'waiting',
 ];
 
+const notFound = (h: Hapi.ResponseToolkit) => {
+  return h.response({
+    "statusCode": 404,
+    "error": "Not Found",
+    "message": "Not Found",
+  }).code(404);
+};
+
 const formatJob = (job: any) => {
   const jobProps = job.toJSON()
 
@@ -56,15 +64,18 @@ const formatJob = (job: any) => {
   }
 };
 
+const GRACE_TIME_MS = 5000;
+const LIMIT = 1000;
+
 class QueuesController {
-  options: PluginOptions;
-  constructor(options: PluginOptions) {
-    this.options = options;
+  internals: Internals;
+  constructor(internals: Internals) {
+    this.internals = internals;
   }
   async index(request: Hapi.Request, h: Hapi.ResponseToolkit) {
     const {
       queues,
-    } = this.options;
+    } = this.internals;
     if (queues.length == 0) {
       return {
         stats: {},
@@ -90,7 +101,7 @@ class QueuesController {
     stats.total_system_memory = redisInfo.total_system_memory || redisInfo.maxmemory;
 
     const data = await Promise.all(queues.map(async queue => {
-      const counts = queue.getJobCounts(...statuses);
+      const counts = await queue.getJobCounts(...statuses);
       const status = query[queue.name] === 'latest' ? statuses : query[queue.name];
       const jobs = await queue.getJobs(status, 0, 10);
 
@@ -107,38 +118,97 @@ class QueuesController {
     };
   }
   async retryAll(request: Hapi.Request, h: Hapi.ResponseToolkit) {
+    const {
+      queues,
+    } = this.internals;
+    const {
+      params: { queue: queueName },
+    } = request;
+    const queue = queues.find(q => q.name === queueName);
+    if (!queue) {
+      return notFound(h);
+    }
   }
   async retry(request: Hapi.Request, h: Hapi.ResponseToolkit) {
+    const {
+      queues,
+    } = this.internals;
+    const {
+      params: { queue: queueName, job: jobId },
+    } = request;
+    const queue = queues.find(q => q.name === queueName);
+    if (!queue) {
+      return notFound(h);
+    }
+
+    const job = await queue.getJob(jobId);
+
+    if (!job) {
+      return notFound(h);
+    }
+
+    await job.retry();
+
+    return h.response().code(204);
   }
   async promote(request: Hapi.Request, h: Hapi.ResponseToolkit) {
+    const {
+      queues,
+    } = this.internals;
+    const {
+      params: { queue: queueName, job: jobId },
+    } = request;
+    const queue = queues.find(q => q.name === queueName);
+    if (!queue) {
+      return notFound(h);
+    }
+
+    const job = await queue.getJob(jobId);
+
+    if (!job) {
+      return notFound(h);
+    }
+
+    await job.promote();
+
+    return h.response().code(204);
   }
   async clean(request: Hapi.Request, h: Hapi.ResponseToolkit) {
+    const {
+      queues,
+    } = this.internals;
+    const {
+      params: { queue: queueName, status },
+    } = request;
+    const queue = queues.find(q => q.name === queueName);
+    if (!queue) {
+      return notFound(h);
+    }
+
+    await queue.clean(GRACE_TIME_MS, status);
+
+    return h.response().code(200);
   }
 };
 
 class Internals {
   options: PluginOptions;
+  queues!: any[];
   constructor(options: PluginOptions) {
     this.options = options;
   }
   async onPostStart(server: Hapi.Server) {
-    const basePath = this.options.path;
+    const { basePath } = this.options;
 
-    const controller = new QueuesController(this.options);
+    const controller = new QueuesController(this);
+
+    this.queues = await this.options.getQueues();
 
     server.route([
       {
         method: 'GET',
         path: `${basePath}/queues`,
-        handler: controller.index,
-        options: {
-          ...this.options.routeOptions,
-        },
-      },
-      {
-        method: 'PUT',
-        path: `${basePath}/queues/retry`,
-        handler: controller.retryAll,
+        handler: controller.index.bind(controller),
         options: {
           ...this.options.routeOptions,
         },
@@ -146,15 +216,7 @@ class Internals {
       {
         method: 'PUT',
         path: `${basePath}/queues/{queue}/retry`,
-        handler: controller.retry,
-        options: {
-          ...this.options.routeOptions,
-        },
-      },
-      {
-        method: 'PUT',
-        path: `${basePath}/queues/{queue}/promote`,
-        handler: controller.promote,
+        handler: controller.retryAll.bind(controller),
         options: {
           ...this.options.routeOptions,
         },
@@ -162,7 +224,23 @@ class Internals {
       {
         method: 'PUT',
         path: `${basePath}/queues/{queue}/clean/{status}`,
-        handler: controller.clean,
+        handler: controller.clean.bind(controller),
+        options: {
+          ...this.options.routeOptions,
+        },
+      },
+      {
+        method: 'PUT',
+        path: `${basePath}/queues/{queue}/jobs/{job}/retry`,
+        handler: controller.retry.bind(controller),
+        options: {
+          ...this.options.routeOptions,
+        },
+      },
+      {
+        method: 'PUT',
+        path: `${basePath}/queues/{queue}/jobs/{job}/promote`,
+        handler: controller.promote.bind(controller),
         options: {
           ...this.options.routeOptions,
         },

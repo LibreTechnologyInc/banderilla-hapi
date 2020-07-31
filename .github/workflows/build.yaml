@@ -46,10 +46,10 @@ jobs:
       #   run: npm run lint
 
       # run tests!
-      - name: Test
-        run: npm run test
-        env: 
-          NODE_ENV: test
+      # - name: Test
+      #   run: npm run test
+      #   env: 
+      #     NODE_ENV: test
 
       # cut a release
       - name: Release

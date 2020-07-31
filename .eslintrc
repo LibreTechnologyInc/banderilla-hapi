@@ -1,0 +1,20 @@
+{
+    "extends": [
+        "airbnb-typescript/base"
+    ],
+    "rules": {
+        "import-name": 0,
+        "variable-name": 0,
+        "arrow-parens": 0,
+        "max-classes-per-file": 0,
+        "no-param-reassign": 0,
+        "no-restricted-syntax": ["error", "ForInStatement", "LabeledStatement", "WithStatement"],
+        "no-continue": 0
+    },
+    "parserOptions": {
+        "ecmaVersion": 2017,
+        "sourceType": "module",
+        "project": "./tsconfig.test.json"
+    },
+    "ignorePatterns": ["/dist/**"]
+}
